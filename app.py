@@ -967,21 +967,6 @@ class InFacApp(tk.Tk):
             avg_conf = sum(self.all_confidences) / len(self.all_confidences)
             self.stat_labels["avg_conf_val"].configure(text=f"{avg_conf:.1%}")
 
-        # Log each detection individually (except the generic 'pcb' class)
-        for pred in predictions:
-            cls_name = pred["class"]
-            if cls_name.lower() == "pcb":
-                continue
-
-            conf = pred["confidence"]
-            color = Colors.SUCCESS if conf >= 0.8 else (Colors.WARNING if conf >= 0.5 else Colors.DANGER)
-            self._add_log_entry(
-                f"🧪 {cls_name}",
-                f"{timestamp}  •  Test snapshot",
-                color,
-                f"{conf:.0%}"
-            )
-
     def _reset_stats(self):
         self.total_inspected = 0
         self.total_defects = 0
@@ -1058,6 +1043,25 @@ class InFacApp(tk.Tk):
                 cls_id = int(box.cls[0].item())
                 confidence = float(box.conf[0].item())
                 class_name = result.names[cls_id]
+
+                # --- Strict Detection Rules ---
+                if class_name.lower() == "solder":
+                    # 1. Require higher confidence for solders
+                    if confidence < 0.75:
+                        continue
+                    
+                    # 2. Aspect Ratio (A good solder is roughly circular/square)
+                    # A bad solder streak or glare might be very wide or very tall
+                    aspect_ratio = float(w) / float(h)
+                    if aspect_ratio > 1.8 or aspect_ratio < 0.55:
+                        continue
+                    
+                    # 3. Minimum / Maximum Size Filter
+                    # Ignores tiny specs of dust or massive false positives
+                    if w < 10 or h < 10:
+                        continue
+                    if w > 120 or h > 120:
+                        continue
 
                 raw_predictions.append({
                     "x": float(x),
