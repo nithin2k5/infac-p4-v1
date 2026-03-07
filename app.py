@@ -9,17 +9,12 @@ import cv2
 import numpy as np
 import time
 import threading
+import queue
 import base64
 import io
 import os
 
-# Suppress missing dependency warnings from the inference package
-os.environ["CORE_MODEL_SAM_ENABLED"] = "False"
-os.environ["CORE_MODEL_SAM3_ENABLED"] = "False"
-os.environ["CORE_MODEL_GAZE_ENABLED"] = "False"
-os.environ["CORE_MODEL_YOLO_WORLD_ENABLED"] = "False"
-
-from inference import get_model
+from ultralytics import YOLO
 from PIL import Image, ImageTk
 from datetime import datetime
 from ui.theme import Colors, Fonts, Dimensions, configure_styles
@@ -27,11 +22,10 @@ from ui.components import StyledButton, ToggleSwitch
 
 
 # ═════════════════════════════════════════════════════════
-#  ROBOFLOW CONFIGURATION
+#  MODEL CONFIGURATION
 # ═════════════════════════════════════════════════════════
 
-ROBOFLOW_API_KEY = "INxX0Lc0epqPhQXpIWj9"
-ROBOFLOW_MODEL = "p4-fiyhn-gluwc/4"
+MODEL_PATH = "weights-2.pt"
 
 
 class InFacApp(tk.Tk):
@@ -84,11 +78,14 @@ class InFacApp(tk.Tk):
         self._detect_interval = 0          # frame counter for inference spacing
         self._inference_fps = 0.0
         self._last_inference_time = 0
+        self.frame_queue = queue.Queue(maxsize=1)
+        self.capture_thread = None
+        self.solder_history = []           # to smooth out flickering detections
 
         # Load Local Model
-        # This caches weights locally on first run and runs offline afterward.
+        # Loads the YOLO weights from the project folder.
         try:
-            self.model = get_model(model_id=ROBOFLOW_MODEL, api_key=ROBOFLOW_API_KEY)
+            self.model = YOLO(MODEL_PATH)
         except Exception as e:
             print(f"Error loading model: {e}")
             self.model = None
@@ -359,9 +356,9 @@ class InFacApp(tk.Tk):
         if getattr(self, "is_paused", False):
             # Resume from paused state
             self.is_paused = False
-            self.is_detecting = False  # Do not auto-resume detection
+            self.is_detecting = True  # Auto-resume detection
             self.cam_status_label.configure(text="● Camera Connected", fg=Colors.SUCCESS)
-            self.model_status_label.configure(text="● Model Idle", fg=Colors.TEXT_MUTED)
+            self.model_status_label.configure(text="● Detecting", fg=Colors.SUCCESS)
             self.start_btn.itemconfig(self.start_btn._text_id, text="⏹  Stop Camera")
             self.start_btn.bg_color = Colors.DANGER_DIM
             self.start_btn.hover_color = Colors.DANGER
@@ -394,9 +391,9 @@ class InFacApp(tk.Tk):
         else:
             cap = cv2.VideoCapture(cam_idx)
 
-        # Lower resolution to speed up preprocessing and inference
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        # Lower resolution to speed up preprocessing and inference. Match model resolution 416x416.
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 416)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 416)
         # Minimize the buffer so we always get the latest frame
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
@@ -427,9 +424,9 @@ class InFacApp(tk.Tk):
         self.camera_canvas.unbind("<Configure>")
 
         self.is_running = True
-        self.is_detecting = False  # Start normally without automatically detecting
+        self.is_detecting = True  # Start detection automatically
         self.cam_status_label.configure(text="● Camera Connected", fg=Colors.SUCCESS)
-        self.model_status_label.configure(text="● Model Idle", fg=Colors.TEXT_MUTED)
+        self.model_status_label.configure(text="● Detecting", fg=Colors.SUCCESS)
 
         self.start_btn.itemconfig(self.start_btn._text_id, text="⏹  Stop Camera")
         self.start_btn.bg_color = Colors.DANGER_DIM
@@ -443,7 +440,30 @@ class InFacApp(tk.Tk):
         self.last_fps_time = time.time()
         self.fps_frame_count = 0
         self._detect_interval = 0
+
+        self.capture_thread = threading.Thread(target=self._camera_capture_loop, daemon=True)
+        self.capture_thread.start()
+
         self._update_frame()
+
+    def _camera_capture_loop(self):
+        """Continuously read frames in the background to avoid blocking the UI."""
+        while getattr(self, "is_running", False) and self.cap and self.cap.isOpened():
+            if getattr(self, "is_video_file", False):
+                time.sleep(0.05)
+                continue
+            
+            ret, frame = self.cap.read()
+            if not ret:
+                time.sleep(0.01)
+                continue
+                
+            if not self.frame_queue.empty():
+                try:
+                    self.frame_queue.get_nowait()
+                except queue.Empty:
+                    pass
+            self.frame_queue.put(frame)
 
     def _stop_camera(self):
         self.is_running = False
@@ -476,14 +496,17 @@ class InFacApp(tk.Tk):
         if not self.is_running or not self.cap:
             return
 
-        ret, frame = self.cap.read()
-        if not ret:
-            if getattr(self, "is_video_file", False):
+        if getattr(self, "is_video_file", False):
+            ret, frame = self.cap.read()
+            if not ret:
                 self._stop_camera()
                 self.cam_status_label.configure(text="● Video Ended", fg=Colors.TEXT_MUTED)
                 return
-            else:
-                self.after(30, self._update_frame)
+        else:
+            try:
+                frame = self.frame_queue.get_nowait()
+            except queue.Empty:
+                self.after(10, self._update_frame)
                 return
 
         if getattr(self, "is_paused", False):
@@ -611,28 +634,7 @@ class InFacApp(tk.Tk):
             return
 
         try:
-            # Run local inference
-            results = self.model.infer(frame, confidence=self.confidence_threshold)
-            
-            # Extract predictions based on inference SDK format
-            # inference returns a list of result objects for a single frame or multiple
-            if isinstance(results, list):
-                result = results[0]
-            else:
-                result = results
-            
-            # Format predictions to match original structure
-            predictions = []
-            if hasattr(result, 'predictions'):
-                for p in result.predictions:
-                    predictions.append({
-                        "x": p.x,
-                        "y": p.y,
-                        "width": p.width,
-                        "height": p.height,
-                        "class": p.class_name,
-                        "confidence": p.confidence
-                    })
+            predictions = self._infer_with_roi(frame)
 
             with self._inference_lock:
                 self.current_detections = predictions
@@ -753,24 +755,7 @@ class InFacApp(tk.Tk):
             return
 
         try:
-            results = self.model.infer(frame, confidence=self.confidence_threshold)
-            
-            if isinstance(results, list):
-                result = results[0]
-            else:
-                result = results
-                
-            predictions = []
-            if hasattr(result, 'predictions'):
-                for p in result.predictions:
-                    predictions.append({
-                        "x": p.x,
-                        "y": p.y,
-                        "width": p.width,
-                        "height": p.height,
-                        "class": p.class_name,
-                        "confidence": p.confidence
-                    })
+            predictions = self._infer_with_roi(frame)
 
             self._static_predictions = predictions  # store for resize redraw
             self._display_static_frame(frame.copy(), predictions)
@@ -885,10 +870,11 @@ class InFacApp(tk.Tk):
         # Pause live camera update so the static result stays on screen
         if self.is_running:
             self.is_paused = True
-            self.is_detecting = False
-            self.model_status_label.configure(text="● Model Paused", fg=Colors.WARNING)
-            with self._inference_lock:
-                self.current_detections = []
+            if self.is_detecting:
+                self.is_detecting = False
+                self.model_status_label.configure(text="● Model Paused", fg=Colors.WARNING)
+                with self._inference_lock:
+                    self.current_detections = []
 
             # Change start button to Resume Camera
             self.start_btn.itemconfig(self.start_btn._text_id, text="▶  Resume Camera")
@@ -918,23 +904,7 @@ class InFacApp(tk.Tk):
                     text="● Model not loaded", fg=Colors.DANGER))
                 return
             try:
-                results = self.model.infer(frame, confidence=self.confidence_threshold)
-                if isinstance(results, list):
-                    result = results[0]
-                else:
-                    result = results
-
-                predictions = []
-                if hasattr(result, 'predictions'):
-                    for p in result.predictions:
-                        predictions.append({
-                            "x": p.x,
-                            "y": p.y,
-                            "width": p.width,
-                            "height": p.height,
-                            "class": p.class_name,
-                            "confidence": p.confidence
-                        })
+                predictions = self._infer_with_roi(frame)
                 self.after(0, self._on_test_result, frame, predictions)
             except Exception as e:
                 print(f"Test inference error: {e}")
@@ -1075,6 +1045,89 @@ class InFacApp(tk.Tk):
     #  HELPERS
     # ═════════════════════════════════════════════════════
 
+    def _infer_with_roi(self, frame):
+        """Infer on full frame and apply NMS (ROI suffix kept for method compatibility)."""
+        results = self.model(frame, conf=self.confidence_threshold, verbose=False)
+        result = results[0]
+
+        raw_predictions = []
+        if len(result.boxes) > 0:
+            for box in result.boxes:
+                # Ultralytics boxes: xywh (center X, center Y, width, height) format
+                x, y, w, h = box.xywh[0].cpu().numpy()
+                cls_id = int(box.cls[0].item())
+                confidence = float(box.conf[0].item())
+                class_name = result.names[cls_id]
+
+                raw_predictions.append({
+                    "x": float(x),
+                    "y": float(y),
+                    "width": float(w),
+                    "height": float(h),
+                    "class": class_name.lower(),
+                    "confidence": confidence
+                })
+                
+        return self._apply_nms(raw_predictions, iou_threshold=0.3)
+        
+    def _apply_nms(self, predictions, iou_threshold=0.3):
+        """Apply Non-Maximum Suppression to filter out overlapping bounding boxes."""
+        if not predictions:
+            return []
+            
+        # Group by class
+        by_class = {}
+        for p in predictions:
+            c = p["class"]
+            if c not in by_class:
+                by_class[c] = []
+            by_class[c].append(p)
+            
+        final_preds = []
+        
+        for cls_name, preds in by_class.items():
+            # Sort by confidence descending
+            preds.sort(key=lambda x: x["confidence"], reverse=True)
+            
+            keep = []
+            for p in preds:
+                # Convert to x1, y1, x2, y2 for easier IoU calc
+                x1_a = p["x"] - p["width"] / 2
+                y1_a = p["y"] - p["height"] / 2
+                x2_a = p["x"] + p["width"] / 2
+                y2_a = p["y"] + p["height"] / 2
+                area_a = p["width"] * p["height"]
+                
+                overlap = False
+                for k in keep:
+                    x1_b = k["x"] - k["width"] / 2
+                    y1_b = k["y"] - k["height"] / 2
+                    x2_b = k["x"] + k["width"] / 2
+                    y2_b = k["y"] + k["height"] / 2
+                    area_b = k["width"] * k["height"]
+                    
+                    # Calculate intersection
+                    inter_x1 = max(x1_a, x1_b)
+                    inter_y1 = max(y1_a, y1_b)
+                    inter_x2 = min(x2_a, x2_b)
+                    inter_y2 = min(y2_a, y2_b)
+                    
+                    if inter_x2 > inter_x1 and inter_y2 > inter_y1:
+                        inter_area = (inter_x2 - inter_x1) * (inter_y2 - inter_y1)
+                        union_area = area_a + area_b - inter_area
+                        iou = inter_area / union_area
+                        
+                        if iou > iou_threshold:
+                            overlap = True
+                            break
+                            
+                if not overlap:
+                    keep.append(p)
+                    
+            final_preds.extend(keep)
+            
+        return final_preds
+
     def _update_result_indicators(self, predictions):
         if not hasattr(self, 'pass_frame') or not hasattr(self, 'ng_frame'):
             return
@@ -1083,10 +1136,23 @@ class InFacApp(tk.Tk):
         solder_preds = [p for p in predictions if p["class"].lower() == "solder"]
         
         pcb_detected = len(pcb_preds) > 0
-        solder_count = len(solder_preds)
+        current_solder_count = len(solder_preds)
         
-        if pcb_detected or solder_count > 0:
-            if solder_count >= 2:
+        # Keep a rolling window of the last 5 frames to prevent flickering
+        if getattr(self, "is_detecting", False) and not getattr(self, "is_paused", False):
+            self.solder_history.append(current_solder_count)
+            if len(self.solder_history) > 5:
+                self.solder_history.pop(0)
+            
+            # Use the highest number of solders seen in the last 5 frames 
+            # (since missing a detection is common, but hallucinating a fake perfect solder is rare)
+            effective_solder_count = max(self.solder_history) if self.solder_history else current_solder_count
+        else:
+            effective_solder_count = current_solder_count
+            self.solder_history = []
+        
+        if pcb_detected or effective_solder_count > 0:
+            if effective_solder_count >= 2:
                 # Glow PASS
                 self.pass_frame.configure(bg=Colors.SUCCESS)
                 self.pass_label.configure(bg=Colors.SUCCESS, fg=Colors.BG_DARKEST)

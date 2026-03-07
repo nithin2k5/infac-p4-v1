@@ -3,7 +3,7 @@ InFac P4 — Industrial Inspection System
 Entry point for the desktop application.
 
 Requirements:
-    pip install opencv-python Pillow requests
+    pip install opencv-python Pillow requests ultralytics
 """
 
 import sys
@@ -25,9 +25,9 @@ def check_dependencies():
     except ImportError:
         missing.append("requests")
     try:
-        import inference
+        import ultralytics
     except ImportError:
-        missing.append("inference")
+        missing.append("ultralytics")
 
     if missing:
         print(f"Missing dependencies: {', '.join(missing)}")
