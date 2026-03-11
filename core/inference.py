@@ -19,7 +19,7 @@ class InferenceEngine:
     def is_loaded(self):
         return self.model is not None
 
-    def infer(self, frame, confidence_threshold=0.65, roi=None):
+    def infer(self, frame, confidence_threshold=0.40, roi=None):
         if not self.is_loaded():
             return []
 
@@ -41,7 +41,7 @@ class InferenceEngine:
             offset_x, offset_y = 0, 0
 
         # Run inference
-        results = self.model(inference_frame, conf=confidence_threshold, verbose=False)
+        results = self.model(inference_frame, conf=confidence_threshold, iou=0.45, verbose=False)
         result = results[0]
 
         raw_predictions = []
@@ -53,22 +53,7 @@ class InferenceEngine:
                 confidence = float(box.conf[0].item())
                 class_name = result.names[cls_id]
 
-                # --- Strict Detection Rules ---
-                if class_name.lower() == "solder":
-                    # 1. Require higher confidence for solders
-                    if confidence < 0.75:
-                        continue
-                    
-                    # 2. Aspect Ratio (A good solder is roughly circular/square)
-                    aspect_ratio = float(bw) / float(bh)
-                    if aspect_ratio > 1.8 or aspect_ratio < 0.55:
-                        continue
-                    
-                    # 3. Minimum / Maximum Size Filter
-                    if bw < 10 or bh < 10:
-                        continue
-                    if bw > 120 or bh > 120:
-                        continue
+                # --- Strict Detection Rules removed ---
 
                 # Adjust coordinates back to the original full-frame space
                 raw_predictions.append({
@@ -80,9 +65,9 @@ class InferenceEngine:
                     "confidence": confidence
                 })
                 
-        return self.apply_nms(raw_predictions, iou_threshold=0.3)
+        return self.apply_nms(raw_predictions, iou_threshold=0.45)
 
-    def apply_nms(self, predictions, iou_threshold=0.3):
+    def apply_nms(self, predictions, iou_threshold=0.45):
         """Apply Non-Maximum Suppression to filter out overlapping bounding boxes."""
         if not predictions:
             return []

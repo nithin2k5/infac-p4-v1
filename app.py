@@ -27,7 +27,7 @@ from ui.components import StyledButton, ToggleSwitch
 #  MODEL CONFIGURATION
 # ═════════════════════════════════════════════════════════
 
-MODEL_PATH = "weights-2.pt"
+MODEL_PATH = "weights-6.pt"
 
 
 class InFacApp(tk.Tk):
@@ -597,7 +597,7 @@ class InFacApp(tk.Tk):
         self.camera_canvas.unbind("<Configure>")
 
         self.is_detecting = True
-        filename = filepath.replace("/", "\").split("\")[-1]
+        filename = filepath.replace("/", "\\").split("\\")[-1]
         self.cam_status_label.configure(text=f"● Video: {filename}", fg=Colors.PRIMARY)
 
         self.start_btn.itemconfig(self.start_btn._text_id, text="⏹  Stop Video")
@@ -650,7 +650,7 @@ class InFacApp(tk.Tk):
         self._static_predictions = predictions
         self._display_static_frame(frame.copy(), predictions)
         
-        filename = filepath.replace("/", "\").split("\")[-1]
+        filename = filepath.replace("/", "\\").split("\\")[-1]
         self.inspection.process_test_snapshot(predictions, filename)
     def _redraw_static(self, event=None):
         """Redraw the uploaded image on canvas resize."""
