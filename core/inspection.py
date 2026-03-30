@@ -4,6 +4,8 @@ class InspectionManager:
         self.total_defects = 0
         self.all_confidences = []
         
+        self.required_solders = 2  # set by app based on detection type
+
         # For auto-inspection state
         self.auto_inspect_enabled = False
         self.state = "WAITING" # WAITING, INSPECTING, COOLDOWN
@@ -41,18 +43,20 @@ class InspectionManager:
 
     def process_test_snapshot(self, predictions, filename="Test snapshot", timestamp=None):
         """Processes a single manual snapshot result."""
+        pcb_detected = any(p["class"].lower() == "pcb" for p in predictions)
         solder_preds = [p for p in predictions if p["class"].lower() == "solder"]
         solder_count = len(solder_preds)
+        req = self.required_solders
 
         self.total_inspected += 1
-        
+
         if timestamp is None:
             import datetime
             timestamp = datetime.datetime.now().strftime("%H:%M:%S")
 
         max_conf = max((p['confidence'] for p in solder_preds), default=0)
-        
-        if solder_count >= 2:
+
+        if pcb_detected and solder_count >= req:
             status_text = "✅ PASS"
             detail = f"{timestamp}  •  {solder_count} solder(s)  •  {filename}"
             color = "#28a745" # Colors.SUCCESS equivalent
@@ -60,10 +64,13 @@ class InspectionManager:
         else:
             self.total_defects += 1
             status_text = "❌ NG"
-            missing = 2 - solder_count
-            detail = f"{timestamp}  •  {missing} solder(s) missing  •  {filename}"
+            if not pcb_detected:
+                detail = f"{timestamp}  •  No PCB detected  •  {filename}"
+            else:
+                missing = req - solder_count
+                detail = f"{timestamp}  •  {missing} solder(s) missing  •  {filename}"
             color = "#dc3545" # Colors.DANGER
-            conf_str = f"{solder_count}/2"
+            conf_str = f"{solder_count}/{req}"
 
         for pred in solder_preds:
             self.all_confidences.append(pred["confidence"])
@@ -74,7 +81,7 @@ class InspectionManager:
         if self.on_log_result:
             self.on_log_result(status_text, detail, color, conf_str)
             
-        return solder_count >= 2
+        return pcb_detected and solder_count >= req
 
     # Continuous Auto-Inspection Logic
     def reset_auto_state(self):
@@ -129,10 +136,12 @@ class InspectionManager:
         import datetime
         timestamp = datetime.datetime.now().strftime("%H:%M:%S")
 
+        pcb_detected = any(p["class"].lower() == "pcb" for p in predictions)
         solder_preds = [p for p in predictions if p["class"].lower() == "solder"]
         max_conf = max((p['confidence'] for p in solder_preds), default=0)
+        req = self.required_solders
 
-        if max_solder_count >= 2:
+        if pcb_detected and max_solder_count >= req:
             status_text = "✅ PASS"
             detail = f"{timestamp}  •  {max_solder_count} solder(s)  •  Auto"
             color = "#28a745"
@@ -140,10 +149,13 @@ class InspectionManager:
         else:
             self.total_defects += 1
             status_text = "❌ NG"
-            missing = 2 - max_solder_count
-            detail = f"{timestamp}  •  {missing} solder(s) missing  •  Auto"
+            if not pcb_detected:
+                detail = f"{timestamp}  •  No PCB detected  •  Auto"
+            else:
+                missing = req - max_solder_count
+                detail = f"{timestamp}  •  {missing} solder(s) missing  •  Auto"
             color = "#dc3545"
-            conf_str = f"{max_solder_count}/2"
+            conf_str = f"{max_solder_count}/{req}"
 
         for pred in solder_preds:
             self.all_confidences.append(pred["confidence"])

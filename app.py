@@ -13,6 +13,7 @@ import queue
 import base64
 import io
 import os
+import subprocess
 
 from core.camera import CameraManager
 from core.inference import InferenceEngine
@@ -291,6 +292,22 @@ class InFacApp(tk.Tk):
         self.roi_var = tk.DoubleVar(value=1.0)
         ttk.Scale(roi_frame, from_=0.3, to=1.0, variable=self.roi_var, orient="horizontal").pack(fill="x", pady=(4, 0))
 
+        # Detection Type
+        det_type_frame = tk.Frame(parent, bg=Colors.BG_CARD)
+        det_type_frame.pack(fill="x", padx=16, pady=(0, 8))
+        tk.Label(det_type_frame, text="Detection Type", font=Fonts.SMALL_BOLD,
+                 bg=Colors.BG_CARD, fg=Colors.TEXT_PRIMARY).pack(anchor="w")
+        self.det_type_var = tk.StringVar(value="Type 1 (2 solders)")
+        self.det_type_combo = ttk.Combobox(
+            det_type_frame,
+            textvariable=self.det_type_var,
+            values=["Type 1 (2 solders)", "Type 2 (3 solders)"],
+            state="readonly",
+            font=Fonts.SMALL,
+        )
+        self.det_type_combo.pack(fill="x", pady=(4, 0))
+        self.det_type_combo.bind("<<ComboboxSelected>>", self._on_det_type_change)
+
         # Result Indicators (PASS / NG)
         sep0 = tk.Frame(parent, bg=Colors.BORDER, height=1)
         sep0.pack(fill="x", padx=16, pady=8)
@@ -537,25 +554,28 @@ class InFacApp(tk.Tk):
         # Pass to inspection logic for glowing PASS/FAIL indicators and Auto-Inspect
         pcb_detected, solder_count = self.inspection.process_live_frame(predictions)
         
-        if pcb_detected or solder_count > 0:
-            if solder_count >= 2:
-                self.pass_frame.configure(bg=Colors.SUCCESS)
-                self.pass_label.configure(bg=Colors.SUCCESS, fg=Colors.BG_DARKEST)
-                self.ng_frame.configure(bg=Colors.BG_MEDIUM)
-                self.ng_label.configure(bg=Colors.BG_MEDIUM, fg=Colors.TEXT_MUTED)
-                self.model_status_label.configure(text="● PASS - Detected", fg=Colors.SUCCESS)
-            else:
-                self.pass_frame.configure(bg=Colors.BG_MEDIUM)
-                self.pass_label.configure(bg=Colors.BG_MEDIUM, fg=Colors.TEXT_MUTED)
-                self.ng_frame.configure(bg=Colors.DANGER)
-                self.ng_label.configure(bg=Colors.DANGER, fg=Colors.TEXT_PRIMARY)
-                self.model_status_label.configure(text="● NG - Inspecting", fg=Colors.DANGER)
+        required = self.inspection.required_solders
+        if pcb_detected and solder_count >= required:
+            self.pass_frame.configure(bg=Colors.SUCCESS)
+            self.pass_label.configure(bg=Colors.SUCCESS, fg=Colors.BG_DARKEST)
+            self.ng_frame.configure(bg=Colors.BG_MEDIUM)
+            self.ng_label.configure(bg=Colors.BG_MEDIUM, fg=Colors.TEXT_MUTED)
+            self.model_status_label.configure(text="● PASS - Detected", fg=Colors.SUCCESS)
+        elif pcb_detected and solder_count < required:
+            self.pass_frame.configure(bg=Colors.BG_MEDIUM)
+            self.pass_label.configure(bg=Colors.BG_MEDIUM, fg=Colors.TEXT_MUTED)
+            self.ng_frame.configure(bg=Colors.DANGER)
+            self.ng_label.configure(bg=Colors.DANGER, fg=Colors.TEXT_PRIMARY)
+            self.model_status_label.configure(text="● NG - Inspecting", fg=Colors.DANGER)
         else:
             self.pass_frame.configure(bg=Colors.BG_MEDIUM)
             self.pass_label.configure(bg=Colors.BG_MEDIUM, fg=Colors.TEXT_MUTED)
             self.ng_frame.configure(bg=Colors.BG_MEDIUM)
             self.ng_label.configure(bg=Colors.BG_MEDIUM, fg=Colors.TEXT_MUTED)
             self.model_status_label.configure(text="● Detecting", fg=Colors.SUCCESS)
+
+    def _on_det_type_change(self, event=None):
+        self.inspection.required_solders = 3 if "Type 2" in self.det_type_var.get() else 2
 
     def _on_auto_toggle(self):
         self.inspection.auto_inspect_enabled = self.auto_var.get()
@@ -779,8 +799,20 @@ class InFacApp(tk.Tk):
         self.stat_labels["pass_rate_val"].configure(text=f"{stats['pass_rate']:.1f}%")
         self.stat_labels["avg_conf_val"].configure(text=f"{stats['avg_conf']:.1%}")
 
+    def _play_ng_alarm(self):
+        """Play an alarm sound when NG is detected (non-blocking)."""
+        threading.Thread(
+            target=lambda: subprocess.run(
+                ["afplay", "/System/Library/Sounds/Basso.aiff"],
+                capture_output=True
+            ),
+            daemon=True
+        ).start()
+
     def _add_log_entry(self, label, detail, color, confidence):
         """Add an entry to the detection log panel."""
+        if "NG" in label:
+            self._play_ng_alarm()
         if hasattr(self, 'empty_label') and self.empty_label.winfo_exists():
             self.empty_label.destroy()
 

@@ -10,7 +10,7 @@ import numpy as np
 
 ROBOFLOW_API_KEY = "cf7X6JDorlmwhw6aqKUK"
 ROBOFLOW_MODEL = "p4-kbph4"
-ROBOFLOW_VERSION = "9"
+ROBOFLOW_VERSION = "11"
 ROBOFLOW_URL = (
     f"https://detect.roboflow.com/{ROBOFLOW_MODEL}/{ROBOFLOW_VERSION}"
 )
