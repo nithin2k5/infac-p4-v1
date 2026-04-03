@@ -200,10 +200,20 @@ class InFacApp(tk.Tk):
             hover_color=Colors.BG_CARD_HOVER, width=150, height=40,
             command=self._upload_media, font=Fonts.BUTTON).pack(side="left", padx=4)
 
+        self.settings_btn = StyledButton(
+            inner, text="⚙️  Cam Settings", bg_color=Colors.BG_CARD,
+            hover_color=Colors.BG_CARD_HOVER, width=150, height=40,
+            command=self._open_cam_settings, font=Fonts.BUTTON)
+        self.settings_btn.pack(side="left", padx=4)
+
         StyledButton(
             inner, text="🔄  Reset Stats", bg_color=Colors.BG_CARD,
             hover_color=Colors.BG_CARD_HOVER, width=130, height=40,
             command=self._reset_stats, font=Fonts.BUTTON).pack(side="left", padx=4)
+
+    def _open_cam_settings(self):
+        if self.camera.is_running:
+            self.camera.open_settings_dialog()
 
     def _build_stats_row(self, parent):
         """Stats cards row below controls."""
@@ -575,7 +585,24 @@ class InFacApp(tk.Tk):
             self.model_status_label.configure(text="● Detecting", fg=Colors.SUCCESS)
 
     def _on_det_type_change(self, event=None):
-        self.inspection.required_solders = 3 if "Type 2" in self.det_type_var.get() else 2
+        is_type2 = "Type 2" in self.det_type_var.get()
+        self.inspection.required_solders = 3 if is_type2 else 2
+
+        # Update inference model version dynamically
+        version = "11" if is_type2 else "9"
+        self.model_status_label.configure(text=f"● Loading Model v{version}...", fg=Colors.WARNING)
+
+        def _update_model():
+            success = self.inference.set_model_version(version)
+            if success:
+                self.after(0, lambda: self.model_status_label.configure(
+                    text="● Detecting" if getattr(self, 'is_detecting', False) else "● Model Ready",
+                    fg=Colors.SUCCESS if getattr(self, 'is_detecting', False) else Colors.TEXT_MUTED))
+            else:
+                self.after(0, lambda: self.model_status_label.configure(
+                    text="● Model Load Failed", fg=Colors.DANGER))
+
+        threading.Thread(target=_update_model, daemon=True).start()
 
     def _on_auto_toggle(self):
         self.inspection.auto_inspect_enabled = self.auto_var.get()

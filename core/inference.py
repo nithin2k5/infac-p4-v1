@@ -10,7 +10,7 @@ import numpy as np
 
 ROBOFLOW_API_KEY = "cf7X6JDorlmwhw6aqKUK"
 ROBOFLOW_MODEL = "p4-kbph4"
-ROBOFLOW_VERSION = "11"
+ROBOFLOW_VERSION = "9"
 ROBOFLOW_URL = (
     f"https://detect.roboflow.com/{ROBOFLOW_MODEL}/{ROBOFLOW_VERSION}"
 )
@@ -24,6 +24,12 @@ class InferenceEngine:
         self.api_key = ROBOFLOW_API_KEY
         self.api_url = ROBOFLOW_URL
         self._loaded = False
+
+    def set_model_version(self, version):
+        """Update inference model version and reload."""
+        self.api_url = f"https://detect.roboflow.com/{ROBOFLOW_MODEL}/{version}"
+        self._loaded = False
+        return self.load_model()
 
     def load_model(self):
         """Verify API connectivity by sending a small test request."""

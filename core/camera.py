@@ -36,6 +36,9 @@ class CameraManager:
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 416)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 416)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        
+        # Explicitly request autofocus for webcams
+        cap.set(cv2.CAP_PROP_AUTOFOCUS, 1)
 
         if not cap.isOpened():
             on_fail()
@@ -82,6 +85,12 @@ class CameraManager:
         if self.cap:
             self.cap.release()
             self.cap = None
+
+    def open_settings_dialog(self):
+        """Open the native DirectShow settings dialog on Windows."""
+        if self.cap and self.is_running and platform.system() == "Windows":
+            # Must be called from the same process, often will pause the capture thread
+            self.cap.set(cv2.CAP_PROP_SETTINGS, 1)
 
     def _capture_loop(self):
         while self.is_running and self.cap and self.cap.isOpened():
