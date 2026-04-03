@@ -33,12 +33,22 @@ class CameraManager:
         else:
             cap = cv2.VideoCapture(cam_idx)
 
+        # Force MJPG codec to prevent lag and slow framerates on Windows
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+        cap.set(cv2.CAP_PROP_FPS, 40)
+
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 416)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 416)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         
-        # Explicitly request autofocus for webcams
-        cap.set(cv2.CAP_PROP_AUTOFOCUS, 1)
+        # Force manual focus (Autofocus OFF)
+        cap.set(cv2.CAP_PROP_AUTOFOCUS, 0)
+        
+        # ⚠️ HARDCODED FOCUS VALUE
+        # Note: This is usually between 0 and 255,, or a specific increment (like multiples of 5).
+        # You will need to change this number until the image is perfectly sharp.
+        FOCUS_VALUE = 40  
+        cap.set(cv2.CAP_PROP_FOCUS, FOCUS_VALUE)
 
         if not cap.isOpened():
             on_fail()
